@@ -158,6 +158,7 @@ All configuration is driven by environment variables. Copy `.env.example` to `.e
 | GET    | `/api/attestations/:address`  | List attestations for address      |
 | POST   | `/api/attestations`           | Create attestation                 |
 | GET    | `/api/verification/:address`  | Verification proof (stub)          |
+| GET    | `/api/analytics/summary`      | Aggregated analytics from materialized view |
 
 Invalid input returns **400** with `{ "error": "Validation failed", "details": [{ "path", "message" }] }`. See [docs/VALIDATION.md](docs/VALIDATION.md).
 
@@ -336,6 +337,26 @@ try {
 | `ENABLE_BOND_EVENTS`   | No         | `false`        | Enable bond event processing             |
 | `HORIZON_URL`          | No         | —              | Stellar Horizon API URL                  |
 | `CORS_ORIGIN`          | No         | `*`            | Allowed CORS origin                      |
+| `ANALYTICS_REFRESH_CRON` | No       | `*/5 * * * *`  | Refresh cadence for analytics materialized view |
+| `ANALYTICS_STALENESS_SECONDS` | No | `300`          | Max acceptable analytics staleness before marked stale |
+
+## Analytics materialized views
+
+Analytics endpoints are backed by PostgreSQL materialized views to reduce response latency on aggregate queries.
+
+- **View source:** `analytics_metrics_mv`
+- **Refresh mode:** `REFRESH MATERIALIZED VIEW CONCURRENTLY`
+- **Default cadence:** every 5 minutes (`ANALYTICS_REFRESH_CRON`)
+- **Freshness window:** 300 seconds (`ANALYTICS_STALENESS_SECONDS`)
+
+The endpoint response includes staleness metadata:
+
+- `asOf`: timestamp of snapshot used in the response
+- `ageSeconds`: age of snapshot when served
+- `fresh`: whether snapshot age is within tolerated window
+- `refreshStatus`: `ok`, `stale`, or `failed_recently`
+
+When a refresh fails, the API keeps serving the last successful snapshot and marks the response with degraded freshness metadata.
 
 ## Database Migrations
 
