@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import request from 'supertest'
-import { app } from './index.js'
+
+vi.mock('./services/health/probes.js', async (importOriginal) => {
+  const mod = await importOriginal<any>()
+  return { ...mod, createDefaultProbes: () => ({}) }
+})
+
+import app from './app.js'
 
 const validAddress = '0x742d35Cc6634C0532925a3b844Bc454e4438f44e'
 
