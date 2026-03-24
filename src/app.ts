@@ -4,6 +4,9 @@ import { createDefaultProbes } from './services/health/probes.js'
 import trustRouter from './routes/trust.js'
 import bulkRouter from './routes/bulk.js'
 import { createAdminRouter } from './routes/admin/index.js'
+import { createAnalyticsRouter } from './routes/analytics.js'
+import { AnalyticsService } from './services/analytics/service.js'
+import { pool } from './db/pool.js'
 import { validate } from './middleware/validate.js'
 import {
   bondPathParamsSchema,
@@ -69,5 +72,11 @@ app.use('/api/bulk', bulkRouter)
 
 // Admin API
 app.use('/api/admin', createAdminRouter())
+
+const analyticsThresholdSeconds = Number(process.env.ANALYTICS_STALENESS_SECONDS ?? '300')
+const analyticsService = process.env.DATABASE_URL
+  ? new AnalyticsService(pool, analyticsThresholdSeconds)
+  : undefined
+app.use('/api/analytics', createAnalyticsRouter(analyticsService))
 
 export default app
