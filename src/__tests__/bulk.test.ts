@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import request from 'supertest'
-import app from '../index.js'
+import app from '../app.js'
 
 describe('POST /api/bulk/verify', () => {
   const ENTERPRISE_KEY = 'test-enterprise-key-12345'

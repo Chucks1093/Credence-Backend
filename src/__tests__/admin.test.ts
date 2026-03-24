@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import request from 'supertest'
-import app from '../index.js'
+import app from '../app.js'
 import { auditLogService } from '../services/audit/index.js'
 import { AuditAction } from '../services/audit/types.js'
 import { UserRole, MOCK_USERS, API_KEY_TO_USER } from '../middleware/auth.js'

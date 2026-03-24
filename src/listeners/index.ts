@@ -5,3 +5,12 @@ export {
   type FullResyncResult,
 } from './identityStateSync.js'
 export type { ContractReader, IdentityState, IdentityStateStore } from './types.js'
+export {
+  AttestationEventListener,
+  type AttestationEvent,
+  type AttestationStore,
+  type AttestationListenerConfig,
+  type AttestationListenerStats,
+  type EventFetcher,
+  type ScoreInvalidationCallback,
+} from './attestationEvents.js'

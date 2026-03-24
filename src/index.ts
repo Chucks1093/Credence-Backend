@@ -1,12 +1,14 @@
-import dotenv from 'dotenv'
-dotenv.config()
-
+import 'dotenv/config'
 import app from './app.js'
+import { loadConfig } from './config/index.js'
 
-const port = process.env.PORT || 3000
+try {
+  const config = loadConfig()
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`)
-})
-
-export default app
+  app.listen(config.port, () => {
+    console.log(`Credence API listening on port ${config.port}`)
+  })
+} catch (error) {
+  console.error("Failed to start Credence API:", error)
+  process.exit(1)
+}

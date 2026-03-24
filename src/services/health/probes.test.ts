@@ -85,6 +85,10 @@ describe('createExternalProbe', () => {
 })
 
 describe('createDbProbe', () => {
+  beforeEach(() => {
+    delete process.env.DATABASE_URL
+  })
+
   afterEach(() => {
     delete process.env.DATABASE_URL
   })
@@ -113,6 +117,10 @@ describe('createDbProbe', () => {
 })
 
 describe('createRedisProbe', () => {
+  beforeEach(() => {
+    delete process.env.REDIS_URL
+  })
+
   afterEach(() => {
     delete process.env.REDIS_URL
   })
