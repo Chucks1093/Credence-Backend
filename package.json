@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "coverage": "vitest run --coverage",
+    "coverage:audit": "vitest run --config vitest.audit.config.ts --coverage",
     "migrate:create": "node-pg-migrate create -j ts -m src/migrations",
     "migrate": "node-pg-migrate -m dist/migrations up",
     "migrate:down": "node-pg-migrate -m dist/migrations down",

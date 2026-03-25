@@ -262,4 +262,33 @@ describe('Sensitive action audit integration', () => {
       .set('Authorization', 'Bearer user-key-00000')
     expect(forbiddenEvidence.status).toBe(403)
   })
+
+  it('audits evidence upload failure for duplicate IDs and maps invalid IDs to 400', async () => {
+    const duplicateEvidenceId = 'immutable-evidence-id'
+
+    const firstUpload = await request(app)
+      .post('/api/evidence/upload')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ evidenceId: duplicateEvidenceId, rawData: 'first payload' })
+    expect(firstUpload.status).toBe(201)
+
+    const secondUpload = await request(app)
+      .post('/api/evidence/upload')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ evidenceId: duplicateEvidenceId, rawData: 'second payload' })
+    expect(secondUpload.status).toBe(400)
+
+    const badIdLookup = await request(app)
+      .get('/api/evidence/%20')
+      .set('Authorization', ADMIN_TOKEN)
+    expect(badIdLookup.status).toBe(400)
+
+    const failureLogs = await request(app)
+      .get(`/api/admin/audit-logs?action=${AuditAction.EVIDENCE_UPLOADED}&status=failure&resourceId=${duplicateEvidenceId}`)
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(failureLogs.status).toBe(200)
+    expect(failureLogs.body.data.total).toBeGreaterThanOrEqual(1)
+    expect(failureLogs.body.data.logs[0].errorMessage).toContain('Evidence already exists')
+  })
 })
