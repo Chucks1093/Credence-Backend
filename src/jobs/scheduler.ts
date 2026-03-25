@@ -1,5 +1,5 @@
 import type { ScoreSnapshotJob } from './scoreSnapshot.js'
-import type { SnapshotJobResult } from './types.js'
+import type { DistributedLock } from './distributedLock.js'
 
 /**
  * Scheduler options.
@@ -11,6 +11,22 @@ export interface SchedulerOptions {
   runOnStart?: boolean
   /** Logger function. */
   logger?: (message: string) => void
+  /**
+   * Optional distributed lock for multi-worker deployments.
+   * When provided, each scheduled invocation acquires the lock before running
+   * so only one replica executes the job per interval.
+   */
+  distributedLock?: DistributedLock
+  /**
+   * Redis key used as the lock name (required when distributedLock is set).
+   * @default 'cron:score-snapshot'
+   */
+  lockKey?: string
+  /**
+   * Lock TTL in milliseconds. Should exceed the expected job duration.
+   * @default 5 × intervalMs (capped at 10 minutes)
+   */
+  lockTtlMs?: number
 }
 
 /**
@@ -31,19 +47,32 @@ export interface SchedulerOptions {
  * ```
  */
 export class JobScheduler {
-  private intervalId: NodeJS.Timeout | null = null
+  private intervalId: ReturnType<typeof setInterval> | null = null
   private isRunning = false
   private readonly intervalMs: number
   private readonly runOnStart: boolean
   private readonly logger: (message: string) => void
+  private readonly distributedLock?: DistributedLock
+  private readonly lockKey: string
+  private readonly lockTtlMs: number
 
   constructor(
     private readonly job: ScoreSnapshotJob,
-    options: { intervalMs: number; runOnStart?: boolean; logger?: (message: string) => void }
+    options: {
+      intervalMs: number
+      runOnStart?: boolean
+      logger?: (message: string) => void
+      distributedLock?: DistributedLock
+      lockKey?: string
+      lockTtlMs?: number
+    }
   ) {
     this.intervalMs = options.intervalMs
     this.runOnStart = options.runOnStart ?? false
     this.logger = options.logger ?? (() => {})
+    this.distributedLock = options.distributedLock
+    this.lockKey = options.lockKey ?? 'cron:score-snapshot'
+    this.lockTtlMs = options.lockTtlMs ?? Math.min(options.intervalMs * 5, 600_000)
   }
 
   /**
@@ -86,6 +115,10 @@ export class JobScheduler {
 
   /**
    * Run the job (internal).
+   *
+   * When a `distributedLock` is configured the job only runs if this worker
+   * can acquire the lock, preventing duplicate execution across replicas.
+   * The in-process `isRunning` guard still applies as a secondary safeguard.
    */
   private async runJob(): Promise<void> {
     if (this.isRunning) {
@@ -93,8 +126,31 @@ export class JobScheduler {
       return
     }
 
-    this.isRunning = true
+    if (this.distributedLock) {
+      const { executed } = await this.distributedLock.withLock(
+        this.lockKey,
+        async () => {
+          this.isRunning = true
+          try {
+            const result = await this.job.run()
+            this.logger(`Job completed: ${JSON.stringify(result)}`)
+          } finally {
+            this.isRunning = false
+          }
+        },
+        { ttlMs: this.lockTtlMs, logger: this.logger }
+      )
 
+      if (!executed) {
+        const metrics = this.distributedLock.getMetrics()
+        this.logger(
+          `Job skipped (lock held by another worker) — contentions: ${metrics.contentions}`
+        )
+      }
+      return
+    }
+
+    this.isRunning = true
     try {
       const result = await this.job.run()
       this.logger(`Job completed: ${JSON.stringify(result)}`)
@@ -126,7 +182,7 @@ export function parseCronToInterval(cronExpression: string): number {
     throw new Error('Invalid cron expression: must have 5 parts')
   }
 
-  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+  const [minute, hour] = parts
 
   // Every minute
   if (minute === '*' && hour === '*') {
@@ -164,5 +220,8 @@ export function createScheduler(
     intervalMs,
     runOnStart: options.runOnStart,
     logger: options.logger,
+    distributedLock: options.distributedLock,
+    lockKey: options.lockKey,
+    lockTtlMs: options.lockTtlMs,
   })
 }

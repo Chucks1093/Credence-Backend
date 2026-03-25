@@ -10,6 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { decodeCursor, encodeCursor } from '../lib/pagination.js';
 
 import type {
   Attestation,
@@ -86,11 +87,11 @@ export class AttestationRepository {
     subject: string,
     {
       includeRevoked = false,
-      page = 1,
+      offset = 0,
       limit = 20,
-    }: { includeRevoked?: boolean; page?: number; limit?: number } = {},
-  ): { attestations: Attestation[]; total: number } {
-    const safePage = Math.max(1, Math.floor(page));
+      cursor,
+    }: { includeRevoked?: boolean; offset?: number; limit?: number; cursor?: string } = {},
+  ): { attestations: Attestation[]; total: number; hasNextPage: boolean; nextCursor?: string } {
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
 
     let results = this.store.filter((a) => a.subject === subject);
@@ -99,16 +100,39 @@ export class AttestationRepository {
       results = results.filter((a) => a.revokedAt === null);
     }
 
-    // Sort newest-first
-    results = [...results].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+    // Sort newest-first. Tie-breaker by descending ID for stability.
+    results = [...results].sort((a, b) => {
+      const timeDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return b.id.localeCompare(a.id);
+    });
 
     const total = results.length;
-    const offset = (safePage - 1) * safeLimit;
-    const attestations = results.slice(offset, offset + safeLimit).map((a) => ({ ...a }));
 
-    return { attestations, total };
+    if (cursor) {
+      const decoded = decodeCursor(cursor);
+      if (decoded) {
+        results = results.filter((a) => {
+          return a.createdAt < decoded.t || (a.createdAt === decoded.t && a.id < decoded.i);
+        });
+      }
+    } else if (offset > 0) {
+      results = results.slice(offset);
+    }
+
+    // Fetch limit + 1 to determine if there are more
+    const sliced = results.slice(0, safeLimit + 1);
+    const hasNextPage = sliced.length > safeLimit;
+
+    const attestations = sliced.slice(0, safeLimit).map((a) => ({ ...a }));
+    let nextCursor: string | undefined;
+
+    if (hasNextPage && attestations.length > 0) {
+      const last = attestations[attestations.length - 1];
+      nextCursor = encodeCursor(last.createdAt, last.id);
+    }
+
+    return { attestations, total, hasNextPage, nextCursor };
   }
 
   /**
