@@ -18,11 +18,21 @@ import {
   attestationsPathParamsSchema,
   createAttestationBodySchema,
 } from './schemas/index.js'
+import { compressionMiddleware, compressionMetricsMiddleware } from './middleware/compression.js'
+import { metricsMiddleware, register } from './middleware/metrics.js'
 
 const app = express()
 
-app.use(express.json())
+// Metrics endpoint for Prometheus
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', register.contentType)
+  res.end(await register.metrics())
+})
 
+app.use(metricsMiddleware)
+app.use(compressionMetricsMiddleware)
+app.use(compressionMiddleware)
+app.use(express.json())
 // Health – full readiness check with per-dependency status
 const healthProbes = createDefaultProbes()
 app.use('/api/health', createHealthRouter(healthProbes))
