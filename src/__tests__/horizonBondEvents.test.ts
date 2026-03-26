@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   upsertBond: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock('stellar-sdk', () => {
+vi.mock('@stellar/stellar-sdk', () => {
   function MockServer() {
     return {
       operations: vi.fn(() => ({
@@ -21,7 +21,7 @@ vi.mock('stellar-sdk', () => {
     }
   }
 
-  return { Server: MockServer }
+  return { Horizon: { Server: MockServer } }
 })
 
 vi.mock('../services/identityService.js', () => ({

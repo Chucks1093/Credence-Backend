@@ -119,3 +119,15 @@ export class IdentityService {
     return new Promise((resolve) => setTimeout(resolve, ms))
   }
 }
+
+// ---------------------------------------------------------------------------
+// Horizon listener integration (stub)
+// ---------------------------------------------------------------------------
+
+export async function upsertIdentity(_identity: { id: string }): Promise<void> {
+  // In production, this should upsert to the identities table.
+}
+
+export async function upsertBond(_bond: { id: string; amount?: string; duration?: string | null }): Promise<void> {
+  // In production, this should upsert to the bonds table.
+}

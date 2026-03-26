@@ -1,69 +1,55 @@
-/**
- * Horizon Bond Creation Listener
- * Listens for bond creation events from Stellar/Horizon and syncs identity/bond state to DB.
- * @module horizonBondEvents
- */
+import { Horizon } from '@stellar/stellar-sdk'
+import { upsertBond, upsertIdentity } from '../services/identityService.js'
 
-import { Server } from 'stellar-sdk';
-import { upsertIdentity, upsertBond } from '../services/identityService';
-
-const HORIZON_URL = process.env.HORIZON_URL || 'https://horizon.stellar.org';
-const server = new Server(HORIZON_URL);
-
-/**
- * Subscribe to bond creation events from Horizon
- * @param {function} onEvent Callback for each bond creation event
- */
-export function subscribeBondCreationEvents(onEvent) {
-  // Example: Listen to operations of type 'create_bond' (custom event)
-  let cursor = 'now';
-  let stream;
-  const startStream = () => {
-    stream = server.operations()
-      .forAsset('BOND') // Replace with actual asset code if needed
-      .cursor(cursor)
-      .stream({
-        onmessage: async (op) => {
-          cursor = op.paging_token;
-          if (op.type === 'create_bond') {
-            const event = parseBondEvent(op);
-            await upsertIdentity(event.identity);
-            await upsertBond(event.bond);
-            if (onEvent) onEvent(event);
-          }
-        },
-        onerror: (err) => {
-          console.error('Horizon stream error:', err);
-          setTimeout(() => {
-            startStream(); // Reconnect after delay
-          }, 5000);
-        }
-      });
-  };
-  startStream();
-
-  // Backfill logic: fetch missed events if needed
-  // Example: fetch operations since last cursor
-  // (Implement as needed based on DB state)
+export interface BondCreationEvent {
+  identity: { id: string }
+  bond: { id: string; amount?: string; duration?: string | null }
 }
 
 /**
- * Parse bond creation event payload
- * @param {object} op Operation object from Horizon
- * @returns {{identity: object, bond: object}}
+ * Subscribe to bond creation events from Horizon.
+ *
+ * The event schema is currently a simplified placeholder driven by tests:
+ * operations of type `create_bond`.
  */
-function parseBondEvent(op) {
-  // Example parsing logic
+export function subscribeBondCreationEvents(onEvent?: (event: BondCreationEvent) => void): void {
+  const horizonUrl = process.env.HORIZON_URL || 'https://horizon.stellar.org'
+  const server = new Horizon.Server(horizonUrl)
+
+  let cursor = 'now'
+
+  const startStream = (): void => {
+    ;(server as any)
+      .operations()
+      .forAsset('BOND')
+      .cursor(cursor)
+      .stream({
+        onmessage: async (op: any) => {
+          cursor = op.paging_token
+          if (op.type !== 'create_bond') return
+
+          const event = parseBondEvent(op)
+          await upsertIdentity(event.identity)
+          await upsertBond(event.bond)
+          onEvent?.(event)
+        },
+        onerror: (err: unknown) => {
+          console.error('Horizon stream error:', err)
+          setTimeout(startStream, 5000)
+        },
+      })
+  }
+
+  startStream()
+}
+
+function parseBondEvent(op: any): BondCreationEvent {
   return {
-    identity: {
-      id: op.source_account,
-      // ...other fields
-    },
+    identity: { id: op.source_account },
     bond: {
       id: op.id,
       amount: op.amount,
-      duration: op.duration || null,
-      // ...other fields
-    }
-  };
+      duration: op.duration ?? null,
+    },
+  }
 }

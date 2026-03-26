@@ -211,6 +211,76 @@ export function createAdminRouter(): Router {
   })
 
   /**
+   * POST /api/admin/impersonate
+   *
+   * Issue a short-lived impersonation token for support/debug purposes.
+   */
+  router.post('/impersonate', requireUserAuth, requireAdminRole, (req: Request, res: Response) => {
+    try {
+      const authReq = req as AuthenticatedRequest
+      const user = authReq.user!
+      const body = req.body as Partial<IssueImpersonationTokenRequest>
+
+      if (!body.targetUserId) {
+        res.status(400).json({ error: 'InvalidRequest', message: 'targetUserId is required' })
+        return
+      }
+      if (!body.reason) {
+        res.status(400).json({ error: 'InvalidRequest', message: 'reason is required' })
+        return
+      }
+
+      const issued = impersonationService.issueToken(
+        user.id,
+        user.email,
+        {
+          targetUserId: body.targetUserId,
+          reason: body.reason,
+          ttlSeconds: body.ttlSeconds,
+        },
+        req.ip,
+      )
+
+      res.status(201).json({ success: true, data: issued })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      if (/User not found/i.test(message)) {
+        res.status(404).json({ error: 'NotFound', message })
+        return
+      }
+      res.status(400).json({ error: 'BadRequest', message })
+    }
+  })
+
+  /**
+   * POST /api/admin/impersonate/:tokenId/revoke
+   *
+   * Revoke an active impersonation token.
+   */
+  router.post('/impersonate/:tokenId/revoke', requireUserAuth, requireAdminRole, (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const user = authReq.user!
+    const { tokenId } = req.params
+
+    if (!tokenId) {
+      res.status(400).json({ error: 'InvalidRequest', message: 'tokenId is required' })
+      return
+    }
+
+    try {
+      impersonationService.revokeToken(user.id, user.email, tokenId, req.ip)
+      res.status(200).json({ success: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      if (/Token not found/i.test(message)) {
+        res.status(404).json({ error: 'NotFound', message })
+        return
+      }
+      res.status(400).json({ error: 'BadRequest', message })
+    }
+  })
+
+  /**
    * GET /api/admin/audit-logs
    * 
    * Retrieve audit logs with optional filtering

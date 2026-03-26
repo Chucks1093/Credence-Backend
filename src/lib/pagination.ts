@@ -135,3 +135,22 @@ export function buildPaginationMeta(
     hasNext: page * limit < total,
   }
 }
+
+export function encodeCursor(createdAt: string, id: string): string {
+  const raw = `${createdAt}|${id}`
+  return Buffer.from(raw, 'utf8').toString('base64url')
+}
+
+export function decodeCursor(cursor: string): { t: string; i: string } | null {
+  try {
+    const raw = Buffer.from(cursor, 'base64url').toString('utf8')
+    const idx = raw.indexOf('|')
+    if (idx <= 0) return null
+    const t = raw.slice(0, idx)
+    const i = raw.slice(idx + 1)
+    if (!t || !i) return null
+    return { t, i }
+  } catch {
+    return null
+  }
+}

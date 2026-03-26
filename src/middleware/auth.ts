@@ -110,8 +110,12 @@ export function requireApiKey(requiredScope: ApiScope) {
       return
     }
 
-    // Attach API key metadata to request
+    // Attach API key metadata without conflicting with other middleware
     ;(req as AuthenticatedRequest).apiKey = { key: apiKey, scope }
+
+    const locals = ((res as unknown as { locals?: Record<string, unknown> }).locals ??=
+      {}) as Record<string, unknown>
+    locals['apiKey'] = { key: apiKey, scope }
     next()
   }
 }

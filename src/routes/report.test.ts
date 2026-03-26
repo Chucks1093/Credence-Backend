@@ -5,24 +5,33 @@ import reportRouter from './report.js'
 import { ApiScope, UserRole } from '../middleware/auth.js'
 import { ReportJobStatus } from '../jobs/types.js'
 
-// Mock dependencies
-vi.mock('../db/pool.js', () => ({
-  getPool: vi.fn(() => ({})),
-}))
-
-vi.mock('../db/repositories/reportRepository.js', () => ({
-  ReportRepository: vi.fn(() => ({
+const mocks = vi.hoisted(() => ({
+  reportRepo: {
     create: vi.fn(),
     findById: vi.fn(),
     updateStatus: vi.fn(),
-  })),
+  },
+  reportService: {
+    startReportGeneration: vi.fn(),
+    getReportStatus: vi.fn(),
+  },
+}))
+
+// Mock dependencies
+vi.mock('../db/pool.js', () => ({
+  pool: {},
+}))
+
+vi.mock('../db/repositories/reportRepository.js', () => ({
+  ReportRepository: vi.fn(function ReportRepository() {
+    return mocks.reportRepo
+  }),
 }))
 
 vi.mock('../services/reportService.js', () => ({
-  ReportService: vi.fn(() => ({
-    startReportGeneration: vi.fn(),
-    getReportStatus: vi.fn(),
-  })),
+  ReportService: vi.fn(function ReportService() {
+    return mocks.reportService
+  }),
 }))
 
 // Import mocked services to set their behaviors
@@ -38,7 +47,7 @@ describe('Report Routes', () => {
     app = express()
     app.use(express.json())
     app.use('/api/reports', reportRouter)
-    mockReportService = (ReportService as any).mock.results[0].value
+    mockReportService = mocks.reportService
   })
 
   describe('POST /api/reports', () => {

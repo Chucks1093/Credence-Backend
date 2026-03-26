@@ -1,5 +1,5 @@
 import type { Router } from 'express'
-import { verificationService } from '../services/verificationService'
+import { verificationService } from '../services/verificationService.js'
 
 /**
  * Setup verification routes

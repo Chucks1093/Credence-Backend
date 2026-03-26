@@ -59,6 +59,18 @@ export class SettlementsRepository {
     const settledAt = input.settledAt ?? new Date()
     const status = input.status ?? 'pending'
 
+    const exists = await this.db.query<{ id: number | string }>(
+      `
+      SELECT id
+      FROM settlements
+      WHERE bond_id = $1 AND transaction_hash = $2
+      LIMIT 1
+      `,
+      [input.bondId, input.transactionHash],
+    )
+
+    const isDuplicate = exists.rows.length > 0
+
     const result = await this.db.query<SettlementRow>(
       `
       INSERT INTO settlements (bond_id, amount, transaction_hash, settled_at, status)
@@ -69,18 +81,13 @@ export class SettlementsRepository {
         status     = EXCLUDED.status,
         settled_at = EXCLUDED.settled_at,
         updated_at = NOW()
-      RETURNING id, bond_id, amount, transaction_hash, settled_at, status,
-                created_at, updated_at,
-                (xmax <> 0) AS is_duplicate
+      RETURNING id, bond_id, amount, transaction_hash, settled_at, status, created_at, updated_at
       `,
-      [input.bondId, input.amount, input.transactionHash, settledAt, status]
+      [input.bondId, input.amount, input.transactionHash, settledAt, status],
     )
 
     const row = result.rows[0]
-    return {
-      settlement: mapSettlement(row),
-      isDuplicate: row.is_duplicate === true,
-    }
+    return { settlement: mapSettlement(row), isDuplicate }
   }
 
   async findById(id: number): Promise<Settlement | null> {
