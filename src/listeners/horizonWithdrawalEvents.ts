@@ -70,11 +70,13 @@ export class HorizonWithdrawalListener {
   private isRunning = false
   private pollTimer?: NodeJS.Timeout
   private lastCursor: string
+  private replayService: { captureFailure: (type: string, data: any, reason: string) => Promise<any> }
 
-  constructor(config: HorizonListenerConfig) {
+  constructor(config: HorizonListenerConfig, replayService: { captureFailure: (type: string, data: any, reason: string) => Promise<any> }) {
     this.config = config
     this.server = new Horizon.Server(config.horizonUrl)
     this.lastCursor = config.lastCursor || 'now'
+    this.replayService = replayService
   }
 
   /**
@@ -292,8 +294,9 @@ export class HorizonWithdrawalListener {
 
       console.log(`Updated bond ${event.bondId}: ${bondUpdate.newAmount} (active: ${bondUpdate.isActive})`)
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Error processing withdrawal event ${event.id}:`, error)
+      await this.replayService.captureFailure('withdrawal', event, error.message)
     }
   }
 

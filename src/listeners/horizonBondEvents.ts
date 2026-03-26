@@ -6,15 +6,17 @@
 
 import { Server } from 'stellar-sdk';
 import { upsertIdentity, upsertBond } from '../services/identityService';
+import { ReplayService } from '../services/replayService.js';
 
 const HORIZON_URL = process.env.HORIZON_URL || 'https://horizon.stellar.org';
 const server = new Server(HORIZON_URL);
 
 /**
  * Subscribe to bond creation events from Horizon
+ * @param {ReplayService} replayService Service to capture failures
  * @param {function} onEvent Callback for each bond creation event
  */
-export function subscribeBondCreationEvents(onEvent) {
+export function subscribeBondCreationEvents(replayService, onEvent) {
   // Example: Listen to operations of type 'create_bond' (custom event)
   let cursor = 'now';
   let stream;
@@ -26,10 +28,15 @@ export function subscribeBondCreationEvents(onEvent) {
         onmessage: async (op) => {
           cursor = op.paging_token;
           if (op.type === 'create_bond') {
-            const event = parseBondEvent(op);
-            await upsertIdentity(event.identity);
-            await upsertBond(event.bond);
-            if (onEvent) onEvent(event);
+            try {
+              const event = parseBondEvent(op);
+              await upsertIdentity(event.identity);
+              await upsertBond(event.bond);
+              if (onEvent) onEvent(event);
+            } catch (error: any) {
+              console.error('Failed to process bond creation event:', error);
+              await replayService.captureFailure('bond_creation', op, error.message);
+            }
           }
         },
         onerror: (err) => {
