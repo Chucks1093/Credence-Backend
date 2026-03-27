@@ -113,6 +113,24 @@ export const identitySyncDuration = new client.Histogram({
 })
 
 // ============================================================================
+// Idempotency Metrics
+// ============================================================================
+
+export const idempotencyGuardChecks = new client.Counter({
+  name: 'idempotency_guard_checks_total',
+  help: 'Total number of idempotency guard checks',
+  labelNames: ['handler_type', 'result'],
+  registers: [register]
+})
+
+export const idempotencyDuplicatesDetected = new client.Counter({
+  name: 'idempotency_duplicates_detected_total',
+  help: 'Total number of duplicate messages detected',
+  labelNames: ['handler_type'],
+  registers: [register]
+})
+
+// ============================================================================
 // Middleware
 // ============================================================================
 
@@ -244,4 +262,26 @@ export function recordIdentitySync(
   durationMs: number
 ) {
   identitySyncDuration.observe({ operation }, durationMs / 1000)
+}
+
+/**
+ * Record idempotency guard check
+ * 
+ * Usage:
+ * ```typescript
+ * import { recordIdempotencyCheck } from './middleware/metrics.js'
+ * 
+ * const result = await guard.process('attestation', messageId, handler)
+ * recordIdempotencyCheck('attestation', result.executed ? 'executed' : 'duplicate')
+ * ```
+ */
+export function recordIdempotencyCheck(
+  handlerType: string,
+  result: 'executed' | 'duplicate'
+) {
+  idempotencyGuardChecks.inc({ handler_type: handlerType, result })
+  
+  if (result === 'duplicate') {
+    idempotencyDuplicatesDetected.inc({ handler_type: handlerType })
+  }
 }
