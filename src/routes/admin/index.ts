@@ -271,7 +271,7 @@ export function createAdminRouter(): Router {
       if (req.query.targetUserId) filters.targetUserId = req.query.targetUserId
       if (req.query.status) filters.status = req.query.status
 
-      const result = adminService.getAuditLogs(user.id, user.email, filters, limit, offset)
+      const result = adminService.getAuditLogs(user.id, user.email, filters, limit, offset, user)
 
       res.status(200).json({
         success: true,
@@ -332,7 +332,7 @@ export function createAdminRouter(): Router {
         return
       }
 
-      const stream = adminService.exportAuditLogs(user.id, user.email, startDate, endDate)
+      const stream = adminService.exportAuditLogs(user.id, user.email, startDate, endDate, user)
 
       // Set headers for NDJSON streaming
       res.setHeader('Content-Type', 'application/x-ndjson')

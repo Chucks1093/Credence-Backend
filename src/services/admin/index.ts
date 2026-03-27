@@ -1,4 +1,5 @@
 import { MOCK_USERS, API_KEY_TO_USER, UserRole } from '../../middleware/auth.js'
+import type { AuthenticatedRequest } from '../../middleware/auth.js'
 import { AuditLogService, AuditAction } from '../audit/index.js'
 import type {
   AdminUser,
@@ -40,8 +41,11 @@ export class AdminService {
     const limit = pagination.limit ?? 50
     const offset = pagination.offset ?? 0
 
+    const tenantId = MOCK_USERS[adminId]?.tenantId || 'tenant-admin'
+
     // Log the list action
     this.auditLog.logAction(
+      tenantId,
       adminId,
       adminEmail,
       AuditAction.LIST_USERS,
@@ -92,10 +96,13 @@ export class AdminService {
   ): AssignRoleResponse {
     const { userId, role } = request
 
+    const tenantId = MOCK_USERS[adminId]?.tenantId || 'tenant-admin'
+
     // Validate role
     const validRoles = Object.values(UserRole)
     if (!validRoles.includes(role)) {
       this.auditLog.logAction(
+        tenantId,
         adminId,
         adminEmail,
         AuditAction.ASSIGN_ROLE,
@@ -111,6 +118,7 @@ export class AdminService {
     const user = MOCK_USERS[userId]
     if (!user) {
       this.auditLog.logAction(
+        tenantId,
         adminId,
         adminEmail,
         AuditAction.ASSIGN_ROLE,
@@ -128,6 +136,7 @@ export class AdminService {
 
     // Log the successful assignment
     this.auditLog.logAction(
+      tenantId,
       adminId,
       adminEmail,
       AuditAction.ASSIGN_ROLE,
@@ -160,9 +169,12 @@ export class AdminService {
   ): RevokeApiKeyResponse {
     const { userId, apiKey } = request
 
+    const tenantId = MOCK_USERS[adminId]?.tenantId || 'tenant-admin'
+
     const user = MOCK_USERS[userId]
     if (!user) {
       this.auditLog.logAction(
+        tenantId,
         adminId,
         adminEmail,
         AuditAction.REVOKE_API_KEY,
@@ -177,6 +189,7 @@ export class AdminService {
 
     if (user.apiKey !== apiKey) {
       this.auditLog.logAction(
+        tenantId,
         adminId,
         adminEmail,
         AuditAction.REVOKE_API_KEY,
@@ -200,6 +213,7 @@ export class AdminService {
 
     // Log the successful revocation
     this.auditLog.logAction(
+      tenantId,
       adminId,
       adminEmail,
       AuditAction.REVOKE_API_KEY,
@@ -228,11 +242,25 @@ export class AdminService {
   getAuditLogs(
     adminId: string,
     adminEmail: string,
-    filters?: any,
-    limit?: number,
-    offset?: number
+    filters: any,
+    limit: number,
+    offset: number,
+    user: AuthenticatedRequest['user']
   ) {
-    return this.auditLog.getLogs(filters, limit, offset)
+    // Enforce tenant scoping: default to user's tenant, super-admin superscope
+    if (!filters.tenantId) {
+      if (!user?.tenantId) {
+        throw new Error('Tenant context required for audit log access')
+      }
+      filters.tenantId = user.tenantId
+    }
+
+    const options: { allowSuperScope?: boolean } = {}
+    if (user?.role === UserRole.SUPER_ADMIN) {
+      options.allowSuperScope = true
+    }
+
+    return this.auditLog.getLogs(filters, limit, offset, options)
   }
 
   /**
@@ -248,10 +276,14 @@ export class AdminService {
     adminId: string,
     adminEmail: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    user: AuthenticatedRequest['user']
   ) {
+    const tenantId = user?.tenantId || 'tenant-admin'
+
     // Log the initiation of the export
     this.auditLog.logAction(
+      tenantId,
       adminId,
       adminEmail,
       AuditAction.EXPORT_AUDIT_LOGS,
@@ -260,7 +292,12 @@ export class AdminService {
       { startDate: startDate.toISOString(), endDate: endDate.toISOString(), phase: 'initiation' }
     )
 
-    return this.auditLog.exportLogsStream(startDate, endDate)
+    const options: { allowSuperScope?: boolean } = {}
+    if (user?.role === UserRole.SUPER_ADMIN) {
+      options.allowSuperScope = true
+    }
+
+    return this.auditLog.exportLogsStream(startDate, endDate, tenantId, options)
   }
 
   /**
@@ -273,13 +310,17 @@ export class AdminService {
     endDate: Date,
     recordCount: number
   ) {
+    // Tenant ID required for audit log entries
+    const tenantId = MOCK_USERS[adminId]?.tenantId || 'tenant-admin'
     this.auditLog.logAction(
+      tenantId,
       adminId,
       adminEmail,
       AuditAction.EXPORT_AUDIT_LOGS,
       adminId,
       adminEmail,
-      { startDate: startDate.toISOString(), endDate: endDate.toISOString(), phase: 'completion', recordCount }
+      { startDate: startDate.toISOString(), endDate: endDate.toISOString(), phase: 'completion', recordCount },
+      'success'
     )
   }
 
@@ -307,3 +348,4 @@ export class AdminService {
     return `api_${timestamp}_${random}`
   }
 }
+

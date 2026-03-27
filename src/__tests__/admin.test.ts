@@ -17,7 +17,7 @@ describe('Admin API', () => {
     
     // Reset mock user data to avoid state contamination between tests
     MOCK_USERS['verifier-user-1'].apiKey = 'verifier-key-67890'
-    MOCK_USERS['admin-user-1'].role = UserRole.ADMIN
+  MOCK_USERS['admin-user-1'].role = UserRole.SUPER_ADMIN
     MOCK_USERS['verifier-user-1'].role = UserRole.VERIFIER
     
     // Reset API key mappings
@@ -668,6 +668,7 @@ describe('Admin API', () => {
       const log1Time = new Date(baseTime)
       vi.setSystemTime(log1Time)
       auditLogService.logAction(
+        'tenant-admin',
         'admin-user-1',
         'admin@credence.org',
         AuditAction.LIST_USERS,
@@ -683,6 +684,7 @@ describe('Admin API', () => {
       const log2Time = new Date(baseTime + 1000 * 60 * 60 * 2) // 2 hours later
       vi.setSystemTime(log2Time)
       auditLogService.logAction(
+        'tenant-admin',
         'admin-user-1',
         'admin@credence.org',
         AuditAction.ASSIGN_ROLE,
@@ -698,6 +700,7 @@ describe('Admin API', () => {
       const log3Time = new Date(baseTime + 1000 * 60 * 60 * 24 * 5) // 5 days later
       vi.setSystemTime(log3Time)
       auditLogService.logAction(
+        'tenant-verifier',
         'admin-user-1',
         'admin@credence.org',
         AuditAction.REVOKE_API_KEY,

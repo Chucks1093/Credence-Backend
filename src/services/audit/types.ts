@@ -17,6 +17,7 @@ export enum AuditAction {
 export interface AuditLogEntry {
   id: string
   timestamp: string
+  tenantId: string
   adminId: string
   adminEmail: string
   action: AuditAction
