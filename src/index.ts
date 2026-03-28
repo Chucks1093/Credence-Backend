@@ -1,38 +1,50 @@
-import express from 'express'
-import { createHealthRouter } from './routes/health.js'
-import { createDefaultProbes } from './services/health/probes.js'
+import 'dotenv/config'
+import app from './app.js'
+import { loadConfig } from './config/index.js'
+import { pool } from './db/pool.js'
+import { AnalyticsService } from './services/analytics/service.js'
+import { AnalyticsRefreshWorker, getAnalyticsRefreshIntervalMs } from './jobs/analyticsRefreshWorker.js'
 
-const app = express()
-const PORT = process.env.PORT ?? 3000
+export { app }
+export default app
 
-app.use(express.json())
+try {
+  const config = loadConfig()
 
-const healthProbes = createDefaultProbes()
-app.use('/api/health', createHealthRouter(healthProbes))
-
-app.get('/api/trust/:address', (req, res) => {
-  const { address } = req.params
-  // Placeholder: in production, fetch from DB / reputation engine
-  res.json({
-    address,
-    score: 0,
-    bondedAmount: '0',
-    bondStart: null,
-    attestationCount: 0,
+  app.listen(config.port, () => {
+    console.log(`Credence API listening on port ${config.port}`)
   })
-})
 
-app.get('/api/bond/:address', (req, res) => {
-  const { address } = req.params
-  res.json({
-    address,
-    bondedAmount: '0',
-    bondStart: null,
-    bondDuration: null,
-    active: false,
-  })
-})
+  if (process.env.DATABASE_URL) {
+    const thresholdSeconds = Number(process.env.ANALYTICS_STALENESS_SECONDS ?? '300')
+    const analyticsService = new AnalyticsService(pool, thresholdSeconds)
+    const refreshWorker = new AnalyticsRefreshWorker(analyticsService, console.log)
+    const intervalMs = getAnalyticsRefreshIntervalMs()
+    let running = false
 
-app.listen(PORT, () => {
-  console.log(`Credence API listening on http://localhost:${PORT}`)
-})
+    const tick = async (): Promise<void> => {
+      if (running) {
+        console.log('Analytics refresh is already running, skipping interval')
+        return
+      }
+      running = true
+      try {
+        await refreshWorker.run()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown refresh error'
+        console.error(`Analytics refresh failed: ${message}`)
+      } finally {
+        running = false
+      }
+    }
+
+    // Run once on startup, then periodically.
+    void tick()
+    setInterval(() => {
+      void tick()
+    }, intervalMs)
+  }
+} catch (error) {
+  console.error("Failed to start Credence API:", error)
+  process.exit(1)
+}

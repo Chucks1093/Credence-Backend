@@ -1,205 +1,320 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { MultiSigCoordinationService, ProposalState } from './multisig.js';
-import { InMemoryProposalStorage } from './inMemoryStorage.js';
+import { describe, it, expect, beforeEach } from 'vitest'
+import {
+  createProposal,
+  getProposal,
+  addSignature,
+  removeSignature,
+  executeIfReady,
+  cancelProposal,
+  getStatus,
+  resetStore,
+} from './multisig.js'
+import type { MultisigInput } from './types.js'
 
-describe('MultiSigCoordinationService (Async)', () => {
-  let service: MultiSigCoordinationService;
-  let storage: InMemoryProposalStorage;
+const HOUR = 60 * 60 * 1000
 
+function validInput(overrides: Partial<MultisigInput> = {}): MultisigInput {
+  return {
+    signers: ['alice', 'bob', 'carol'],
+    requiredSignatures: 2,
+    action: 'slash_bond',
+    ttlMs: 24 * HOUR,
+    ...overrides,
+  }
+}
+
+describe('multisig', () => {
   beforeEach(() => {
-    storage = new InMemoryProposalStorage();
-    service = new MultiSigCoordinationService(storage);
-    vi.useFakeTimers();
-  });
+    resetStore()
+  })
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  // ---- createProposal ----
 
-  it('should create a proposal successfully', async () => {
-    const callback = vi.fn();
-    service.on('proposalCreated', callback);
+  describe('createProposal', () => {
+    it('creates a proposal with correct initial state', () => {
+      const p = createProposal(validInput())
+      expect(p.id).toBeDefined()
+      expect(p.status).toBe('pending')
+      expect(p.signatures.size).toBe(0)
+      expect(p.signers).toEqual(['alice', 'bob', 'carol'])
+      expect(p.requiredSignatures).toBe(2)
+      expect(p.action).toBe('slash_bond')
+      expect(p.expiresAt.getTime()).toBeGreaterThan(p.createdAt.getTime())
+    })
 
-    await service.createProposal('prop1', 2, ['alice', 'bob', 'charlie'], { action: 'transfer' }, 60);
+    it('copies the signers array (no shared reference)', () => {
+      const signers = ['alice', 'bob']
+      const p = createProposal(validInput({ signers }))
+      signers.push('dave')
+      expect(p.signers).toEqual(['alice', 'bob'])
+    })
 
-    const proposal = await service.getProposal('prop1');
-    expect(proposal).toBeDefined();
-    expect(proposal?.id).toBe('prop1');
-    expect(proposal?.requiredSignatures).toBe(2);
-    expect(proposal?.state).toBe(ProposalState.PENDING);
-    expect(callback).toHaveBeenCalledWith(proposal);
-  });
+    it('rejects fewer than 2 signers', () => {
+      expect(() => createProposal(validInput({ signers: ['alice'] }))).toThrow(
+        'At least 2 signers',
+      )
+    })
 
-  it('should throw when creating a proposal with duplicate ID', async () => {
-    await service.createProposal('prop1', 1, ['alice'], {}, 60);
-    await expect(service.createProposal('prop1', 1, ['alice'], {}, 60))
-      .rejects.toThrow('Proposal with ID prop1 already exists');
-  });
+    it('rejects more than 20 signers', () => {
+      const signers = Array.from({ length: 21 }, (_, i) => `signer-${i}`)
+      expect(() => createProposal(validInput({ signers }))).toThrow('Cannot exceed 20')
+    })
 
-  it('should throw when required signatures exceed signers', async () => {
-    await expect(service.createProposal('prop1', 3, ['alice', 'bob'], {}, 60))
-      .rejects.toThrow('Required signatures cannot exceed total number of signers');
-  });
+    it('rejects duplicate signers', () => {
+      expect(() =>
+        createProposal(validInput({ signers: ['alice', 'alice', 'bob'] })),
+      ).toThrow('Duplicate signers')
+    })
 
-  it('should return undefined for non-existent proposal', async () => {
-    const prop = await service.getProposal('nonexistent');
-    expect(prop).toBeUndefined();
-  });
+    it('rejects requiredSignatures of 0', () => {
+      expect(() => createProposal(validInput({ requiredSignatures: 0 }))).toThrow(
+        'requiredSignatures must be between',
+      )
+    })
 
-  it('should collect signatures and transition to APPROVED when threshold met', async () => {
-    const sigCallback = vi.fn();
-    const appCallback = vi.fn();
-    service.on('signatureSubmitted', sigCallback);
-    service.on('proposalApproved', appCallback);
+    it('rejects requiredSignatures exceeding signer count', () => {
+      expect(() => createProposal(validInput({ requiredSignatures: 5 }))).toThrow(
+        'requiredSignatures must be between',
+      )
+    })
 
-    await service.createProposal('prop1', 2, ['alice', 'bob', 'charlie'], {}, 60);
+    it('rejects missing action', () => {
+      expect(() => createProposal(validInput({ action: '' }))).toThrow('action is required')
+    })
 
-    // First signature
-    const isApproved1 = await service.submitSignature('prop1', 'alice', 'sig-alice');
-    expect(isApproved1).toBe(false);
-    expect(sigCallback).toHaveBeenCalledWith({ id: 'prop1', signer: 'alice', signature: 'sig-alice' });
-    expect(appCallback).not.toHaveBeenCalled();
-    const propAfterFirst = await service.getProposal('prop1');
-    expect(propAfterFirst?.state).toBe(ProposalState.PENDING);
+    it('rejects ttl below minimum', () => {
+      expect(() => createProposal(validInput({ ttlMs: 1000 }))).toThrow('ttlMs must be at least')
+    })
+  })
 
-    // Second signature (threshold met)
-    const isApproved2 = await service.submitSignature('prop1', 'bob', 'sig-bob');
-    expect(isApproved2).toBe(true);
-    expect(sigCallback).toHaveBeenCalledWith({ id: 'prop1', signer: 'bob', signature: 'sig-bob' });
-    expect(appCallback).toHaveBeenCalled();
-    const propAfterSecond = await service.getProposal('prop1');
-    expect(propAfterSecond?.state).toBe(ProposalState.APPROVED);
-  });
+  // ---- retrieval ----
 
-  it('should throw when signing non-existent proposal', async () => {
-    await expect(service.submitSignature('prop1', 'alice', 'sig'))
-      .rejects.toThrow('Proposal prop1 not found');
-  });
+  describe('getProposal', () => {
+    it('retrieves a stored proposal', () => {
+      const p = createProposal(validInput())
+      expect(getProposal(p.id)).toBeDefined()
+      expect(getProposal(p.id)!.id).toBe(p.id)
+    })
 
-  it('should throw when unauthorized signer attempts to sign', async () => {
-    await service.createProposal('prop1', 2, ['alice', 'bob'], {}, 60);
-    await expect(service.submitSignature('prop1', 'charlie', 'sig'))
-      .rejects.toThrow('Signer charlie is not authorized for proposal prop1');
-  });
+    it('returns undefined for unknown id', () => {
+      expect(getProposal('ghost')).toBeUndefined()
+    })
+  })
 
-  it('should throw when signer signs twice', async () => {
-    await service.createProposal('prop1', 2, ['alice', 'bob'], {}, 60);
-    await service.submitSignature('prop1', 'alice', 'sig1');
-    await expect(service.submitSignature('prop1', 'alice', 'sig2'))
-      .rejects.toThrow('Signer alice has already signed proposal prop1');
-  });
+  // ---- signatures ----
 
-  it('should throw when signing non-PENDING proposal', async () => {
-    await service.createProposal('prop1', 1, ['alice'], {}, 60);
-    await service.submitSignature('prop1', 'alice', 'sig'); // transitions to APPROVED
-    
-    // Add charlie manually to signers to test the state check
-    const prop = (await service.getProposal('prop1'))!;
-    prop.signers.add('charlie');
-    await storage.updateProposal(prop);
+  describe('addSignature', () => {
+    it('adds a valid signer', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      expect(p.signatures.has('alice')).toBe(true)
+      expect(p.signatures.size).toBe(1)
+    })
 
-    await expect(service.submitSignature('prop1', 'charlie', 'sig'))
-      .rejects.toThrow('Cannot sign proposal in state APPROVED');
-  });
+    it('accumulates multiple signatures', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      expect(p.signatures.size).toBe(2)
+    })
 
-  it('should handle timeout correctly on signature submission', async () => {
-    const callback = vi.fn();
-    service.on('proposalRejected', callback);
+    it('rejects an unauthorized signer', () => {
+      const p = createProposal(validInput())
+      expect(() => addSignature(p.id, 'eve')).toThrow('not an authorized signer')
+    })
 
-    await service.createProposal('prop1', 2, ['alice', 'bob'], {}, 60);
+    it('rejects duplicate signature from the same signer', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      expect(() => addSignature(p.id, 'alice')).toThrow('already signed')
+    })
 
-    // Advance time by 61 minutes
-    vi.advanceTimersByTime(61 * 60 * 1000);
+    it('throws for non-existent proposal', () => {
+      expect(() => addSignature('nope', 'alice')).toThrow('not found')
+    })
 
-    await expect(service.submitSignature('prop1', 'alice', 'sig'))
-      .rejects.toThrow('Proposal prop1 has expired');
+    it('throws when proposal is not pending', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      executeIfReady(p.id)
+      expect(() => addSignature(p.id, 'carol')).toThrow('Cannot sign a proposal')
+    })
 
-    const prop = await service.getProposal('prop1');
-    expect(prop?.state).toBe(ProposalState.REJECTED);
-    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ id: 'prop1', reason: 'Expired' }));
-  });
+    it('auto-expires and throws when signing past expiry', () => {
+      const p = createProposal(validInput({ ttlMs: HOUR }))
+      p.expiresAt = new Date(Date.now() - 1000) // force expired
+      expect(() => addSignature(p.id, 'alice')).toThrow('expired')
+      expect(p.status).toBe('expired')
+    })
+  })
 
-  it('should execute an approved proposal', async () => {
-    const callback = vi.fn();
-    service.on('proposalExecuted', callback);
+  describe('removeSignature', () => {
+    it('removes a signature', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      removeSignature(p.id, 'alice')
+      expect(p.signatures.size).toBe(0)
+    })
 
-    await service.createProposal('prop1', 1, ['alice'], { data: 'test payload' }, 60);
-    await service.submitSignature('prop1', 'alice', 'sig');
+    it('throws when signer has not signed', () => {
+      const p = createProposal(validInput())
+      expect(() => removeSignature(p.id, 'alice')).toThrow('has not signed')
+    })
 
-    const payload = await service.executeProposal('prop1');
-    expect(payload).toEqual({ data: 'test payload' });
+    it('throws for non-existent proposal', () => {
+      expect(() => removeSignature('nope', 'alice')).toThrow('not found')
+    })
 
-    const prop = await service.getProposal('prop1');
-    expect(prop?.state).toBe(ProposalState.EXECUTED);
-    expect(callback).toHaveBeenCalledWith(prop);
-  });
+    it('throws when proposal is not pending', () => {
+      const p = createProposal(validInput())
+      cancelProposal(p.id)
+      expect(() => removeSignature(p.id, 'alice')).toThrow('Cannot modify')
+    })
+  })
 
-  it('should throw when executing unapproved proposal', async () => {
-    await service.createProposal('prop1', 2, ['alice', 'bob'], {}, 60);
-    await service.submitSignature('prop1', 'alice', 'sig');
+  // ---- execution ----
 
-    await expect(service.executeProposal('prop1'))
-      .rejects.toThrow('Cannot execute proposal in state PENDING');
-  });
+  describe('executeIfReady', () => {
+    it('executes when enough signatures are present', () => {
+      const p = createProposal(validInput({ requiredSignatures: 2 }))
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      const executed = executeIfReady(p.id)
+      expect(executed.status).toBe('executed')
+    })
 
-  it('should throw when executing non-existent proposal', async () => {
-    await expect(service.executeProposal('prop1'))
-      .rejects.toThrow('Proposal prop1 not found');
-  });
+    it('throws when not enough signatures', () => {
+      const p = createProposal(validInput({ requiredSignatures: 2 }))
+      addSignature(p.id, 'alice')
+      expect(() => executeIfReady(p.id)).toThrow('Not enough signatures: 1/2')
+    })
 
-  it('should record slashing votes', async () => {
-    const callback = vi.fn();
-    service.on('slashingVoteAdded', callback);
+    it('throws for non-existent proposal', () => {
+      expect(() => executeIfReady('does-not-exist')).toThrow('not found')
+    })
 
-    await service.createProposal('prop1', 2, ['alice', 'bob'], {}, 60);
-    await service.addSlashingVote('prop1', 'charlie');
+    it('throws when not in pending state', () => {
+      const p = createProposal(validInput())
+      cancelProposal(p.id)
+      expect(() => executeIfReady(p.id)).toThrow('Cannot execute')
+    })
 
-    const prop = await service.getProposal('prop1');
-    expect(prop?.slashingVotes.has('charlie')).toBe(true);
-    expect(callback).toHaveBeenCalledWith({ id: 'prop1', voter: 'charlie' });
-  });
+    it('auto-expires and throws on execution past expiry', () => {
+      const p = createProposal(validInput({ ttlMs: HOUR }))
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      p.expiresAt = new Date(Date.now() - 1000) // force expired
+      expect(() => executeIfReady(p.id)).toThrow('expired')
+      expect(p.status).toBe('expired')
+    })
+  })
 
-  it('should throw on duplicate slashing vote', async () => {
-    await service.createProposal('prop1', 2, ['alice', 'bob'], {}, 60);
-    await service.addSlashingVote('prop1', 'charlie');
-    await expect(service.addSlashingVote('prop1', 'charlie'))
-      .rejects.toThrow('Voter charlie has already submitted a slashing vote');
-  });
+  // ---- cancellation ----
 
-  it('should throw when adding slashing vote to expired proposal', async () => {
-    await service.createProposal('prop1', 1, ['alice'], {}, 60);
-    vi.advanceTimersByTime(61 * 60 * 1000);
+  describe('cancelProposal', () => {
+    it('cancels a pending proposal', () => {
+      const p = createProposal(validInput())
+      const cancelled = cancelProposal(p.id)
+      expect(cancelled.status).toBe('cancelled')
+    })
 
-    await expect(service.addSlashingVote('prop1', 'charlie'))
-      .rejects.toThrow('Proposal prop1 has expired');
-  });
-  
-  it('should reject a proposal explicitly', async () => {
-    const callback = vi.fn();
-    service.on('proposalRejected', callback);
+    it('cancels an expired proposal', () => {
+      const p = createProposal(validInput({ ttlMs: HOUR }))
+      p.expiresAt = new Date(Date.now() - 1000)
+      // status is still 'pending' (lazy expiry), cancel should work
+      const cancelled = cancelProposal(p.id)
+      expect(cancelled.status).toBe('cancelled')
+    })
 
-    await service.createProposal('prop1', 2, ['alice', 'bob'], {}, 60);
-    await service.rejectProposal('prop1', 'Malicious payload');
+    it('throws when already executed', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      executeIfReady(p.id)
+      expect(() => cancelProposal(p.id)).toThrow('Cannot cancel an executed')
+    })
 
-    const prop = await service.getProposal('prop1');
-    expect(prop?.state).toBe(ProposalState.REJECTED);
-    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ id: 'prop1', reason: 'Malicious payload' }));
-  });
-  
-  it('should reject an approved proposal before execution', async () => {
-    await service.createProposal('prop1', 1, ['alice'], {}, 60);
-    await service.submitSignature('prop1', 'alice', 'sig');
-    await service.rejectProposal('prop1', 'Found a bug');
-    const prop = await service.getProposal('prop1');
-    expect(prop?.state).toBe(ProposalState.REJECTED);
-  });
+    it('throws when already cancelled', () => {
+      const p = createProposal(validInput())
+      cancelProposal(p.id)
+      expect(() => cancelProposal(p.id)).toThrow('already cancelled')
+    })
 
-  it('should throw when explicitly rejecting an already executed proposal', async () => {
-    await service.createProposal('prop1', 1, ['alice'], {}, 60);
-    await service.submitSignature('prop1', 'alice', 'sig');
-    await service.executeProposal('prop1');
+    it('throws for non-existent proposal', () => {
+      expect(() => cancelProposal('missing')).toThrow('not found')
+    })
+  })
 
-    await expect(service.rejectProposal('prop1', 'Too late'))
-      .rejects.toThrow('Cannot reject proposal in state EXECUTED');
-  });
-});
+  // ---- status ----
+
+  describe('getStatus', () => {
+    it('returns pending for a new proposal', () => {
+      const p = createProposal(validInput())
+      expect(getStatus(p.id)).toBe('pending')
+    })
+
+    it('returns executed after execution', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      executeIfReady(p.id)
+      expect(getStatus(p.id)).toBe('executed')
+    })
+
+    it('returns cancelled after cancellation', () => {
+      const p = createProposal(validInput())
+      cancelProposal(p.id)
+      expect(getStatus(p.id)).toBe('cancelled')
+    })
+
+    it('lazily transitions to expired when deadline passed', () => {
+      const p = createProposal(validInput({ ttlMs: HOUR }))
+      p.expiresAt = new Date(Date.now() - 1000)
+      expect(getStatus(p.id)).toBe('expired')
+    })
+
+    it('throws for non-existent proposal', () => {
+      expect(() => getStatus('fake')).toThrow('not found')
+    })
+  })
+
+  // ---- full lifecycle (integration-ish) ----
+
+  describe('lifecycle', () => {
+    it('pending → signed → executed', () => {
+      const p = createProposal(validInput({ requiredSignatures: 3 }))
+      expect(getStatus(p.id)).toBe('pending')
+
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      expect(() => executeIfReady(p.id)).toThrow('Not enough signatures')
+
+      addSignature(p.id, 'carol')
+      executeIfReady(p.id)
+      expect(getStatus(p.id)).toBe('executed')
+    })
+
+    it('pending → signed → remove sig → add sig → execute', () => {
+      const p = createProposal(validInput({ requiredSignatures: 2 }))
+      addSignature(p.id, 'alice')
+      addSignature(p.id, 'bob')
+      removeSignature(p.id, 'bob')
+
+      expect(() => executeIfReady(p.id)).toThrow('Not enough signatures')
+
+      addSignature(p.id, 'carol')
+      executeIfReady(p.id)
+      expect(getStatus(p.id)).toBe('executed')
+    })
+
+    it('pending → cancelled (blocks further signatures)', () => {
+      const p = createProposal(validInput())
+      addSignature(p.id, 'alice')
+      cancelProposal(p.id)
+
+      expect(() => addSignature(p.id, 'bob')).toThrow('Cannot sign')
+      expect(() => executeIfReady(p.id)).toThrow('Cannot execute')
+    })
+  })
+})
