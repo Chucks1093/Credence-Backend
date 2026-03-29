@@ -13,7 +13,6 @@ import { validate } from './middleware/validate.js'
 import { requestIdMiddleware } from './middleware/requestId.js'
 import {
   buildPaginationMeta,
-  PaginationValidationError,
   parsePaginationParams,
 } from './lib/pagination.js'
 import {
@@ -71,7 +70,7 @@ app.get(
 app.get(
   '/api/attestations/:address',
   validate({ params: attestationsPathParamsSchema }),
-  (req, res) => {
+  (req, res, next) => {
     const { address } = req.validated!.params! as { address: string }
     try {
       const { page, limit, offset } = parsePaginationParams(req.query as Record<string, unknown>)
@@ -82,15 +81,7 @@ app.get(
         ...buildPaginationMeta(0, page, limit),
       })
     } catch (error) {
-      if (error instanceof PaginationValidationError) {
-        res.status(400).json({
-          error: 'Validation failed',
-          details: error.details,
-        })
-        return
-      }
-
-      throw error
+      next(error)
     }
   },
 )
@@ -123,5 +114,8 @@ const analyticsService = process.env.DATABASE_URL
   ? new AnalyticsService(pool, analyticsThresholdSeconds)
   : undefined
 app.use('/api/analytics', createAnalyticsRouter(analyticsService))
+
+// Final error handler
+app.use(errorHandler)
 
 export default app

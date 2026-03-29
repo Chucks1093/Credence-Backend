@@ -1,3 +1,4 @@
+import { AppError, ErrorCode } from '../../lib/errors.js'
 import type { Pool } from 'pg'
 import type { Queryable } from './queryable.js'
 
@@ -5,19 +6,19 @@ export type BondStatus = 'active' | 'released' | 'slashed'
 
 /**
  * Thrown when a debit would reduce a bond's amount below zero.
- * Callers should surface this as HTTP 422 / error code INSUFFICIENT_FUNDS.
  */
-export class InsufficientFundsError extends Error {
-  readonly code = 'INSUFFICIENT_FUNDS' as const
+export class InsufficientFundsError extends AppError {
   constructor(
     readonly bondId: number,
     readonly available: string,
     readonly requested: string
   ) {
     super(
-      `Insufficient funds on bond ${bondId}: available ${available}, requested ${requested}`
+      `Insufficient funds on bond ${bondId}: available ${available}, requested ${requested}`,
+      ErrorCode.INSUFFICIENT_FUNDS,
+      422,
+      { bondId, available, requested }
     )
-    this.name = 'InsufficientFundsError'
   }
 }
 
