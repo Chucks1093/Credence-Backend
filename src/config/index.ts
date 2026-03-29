@@ -1,5 +1,12 @@
 import { z } from 'zod'
 import dotenv from 'dotenv'
+import {
+  enforceRetryPolicyCaps,
+  type ProviderRetryPolicies,
+  type RetryJitterStrategy,
+  type RetryPolicy,
+  type RetryPolicyOverrides,
+} from '../lib/retryPolicy.js'
 
 dotenv.config()
 
@@ -69,6 +76,26 @@ export const envSchema = z.object({
 
   // CORS
   CORS_ORIGIN: z.string().default('*'),
+
+  // Outbound retry defaults
+  OUTBOUND_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(3),
+  OUTBOUND_RETRY_BASE_DELAY_MS: z.coerce.number().int().min(1).default(200),
+  OUTBOUND_RETRY_MAX_DELAY_MS: z.coerce.number().int().min(1).default(2_000),
+  OUTBOUND_RETRY_BACKOFF_MULTIPLIER: z.coerce.number().min(1).default(2),
+  OUTBOUND_RETRY_JITTER_STRATEGY: z.enum(['none', 'full', 'equal']).default('none'),
+
+  // Provider-specific outbound retry overrides
+  OUTBOUND_RETRY_SOROBAN_MAX_ATTEMPTS: z.coerce.number().int().min(1).optional(),
+  OUTBOUND_RETRY_SOROBAN_BASE_DELAY_MS: z.coerce.number().int().min(1).optional(),
+  OUTBOUND_RETRY_SOROBAN_MAX_DELAY_MS: z.coerce.number().int().min(1).optional(),
+  OUTBOUND_RETRY_SOROBAN_BACKOFF_MULTIPLIER: z.coerce.number().min(1).optional(),
+  OUTBOUND_RETRY_SOROBAN_JITTER_STRATEGY: z.enum(['none', 'full', 'equal']).optional(),
+
+  OUTBOUND_RETRY_WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).optional(),
+  OUTBOUND_RETRY_WEBHOOK_BASE_DELAY_MS: z.coerce.number().int().min(1).optional(),
+  OUTBOUND_RETRY_WEBHOOK_MAX_DELAY_MS: z.coerce.number().int().min(1).optional(),
+  OUTBOUND_RETRY_WEBHOOK_BACKOFF_MULTIPLIER: z.coerce.number().min(1).optional(),
+  OUTBOUND_RETRY_WEBHOOK_JITTER_STRATEGY: z.enum(['none', 'full', 'equal']).optional(),
 })
 
 export type Env = z.infer<typeof envSchema>
@@ -108,9 +135,71 @@ export interface Config {
   cors: {
     origin: string
   }
+  outboundHttp: {
+    retry: {
+      defaults: RetryPolicy
+      providers: Record<string, RetryPolicyOverrides | undefined>
+    }
+  }
+}
+
+function hasRetryOverride(overrides: RetryPolicyOverrides): boolean {
+  return Object.values(overrides).some((value) => value !== undefined)
+}
+
+function createRetryOverride(params: {
+  maxAttempts?: number
+  baseDelayMs?: number
+  maxDelayMs?: number
+  backoffMultiplier?: number
+  jitterStrategy?: RetryJitterStrategy
+}): RetryPolicyOverrides | undefined {
+  const overrides: RetryPolicyOverrides = {
+    maxAttempts: params.maxAttempts,
+    baseDelayMs: params.baseDelayMs,
+    maxDelayMs: params.maxDelayMs,
+    backoffMultiplier: params.backoffMultiplier,
+    jitterStrategy: params.jitterStrategy,
+  }
+
+  return hasRetryOverride(overrides) ? overrides : undefined
 }
 
 function mapEnvToConfig(env: Env): Config {
+  const defaultRetryPolicy = enforceRetryPolicyCaps({
+    maxAttempts: env.OUTBOUND_RETRY_MAX_ATTEMPTS,
+    baseDelayMs: env.OUTBOUND_RETRY_BASE_DELAY_MS,
+    maxDelayMs: env.OUTBOUND_RETRY_MAX_DELAY_MS,
+    backoffMultiplier: env.OUTBOUND_RETRY_BACKOFF_MULTIPLIER,
+    jitterStrategy: env.OUTBOUND_RETRY_JITTER_STRATEGY,
+  })
+
+  const providerPolicies: Record<string, RetryPolicyOverrides | undefined> = {}
+
+  const sorobanOverride = createRetryOverride({
+    maxAttempts: env.OUTBOUND_RETRY_SOROBAN_MAX_ATTEMPTS,
+    baseDelayMs: env.OUTBOUND_RETRY_SOROBAN_BASE_DELAY_MS,
+    maxDelayMs: env.OUTBOUND_RETRY_SOROBAN_MAX_DELAY_MS,
+    backoffMultiplier: env.OUTBOUND_RETRY_SOROBAN_BACKOFF_MULTIPLIER,
+    jitterStrategy: env.OUTBOUND_RETRY_SOROBAN_JITTER_STRATEGY,
+  })
+
+  if (sorobanOverride) {
+    providerPolicies.soroban = sorobanOverride
+  }
+
+  const webhookOverride = createRetryOverride({
+    maxAttempts: env.OUTBOUND_RETRY_WEBHOOK_MAX_ATTEMPTS,
+    baseDelayMs: env.OUTBOUND_RETRY_WEBHOOK_BASE_DELAY_MS,
+    maxDelayMs: env.OUTBOUND_RETRY_WEBHOOK_MAX_DELAY_MS,
+    backoffMultiplier: env.OUTBOUND_RETRY_WEBHOOK_BACKOFF_MULTIPLIER,
+    jitterStrategy: env.OUTBOUND_RETRY_WEBHOOK_JITTER_STRATEGY,
+  })
+
+  if (webhookOverride) {
+    providerPolicies.webhook = webhookOverride
+  }
+
   const config: Config = {
     port: env.PORT,
     nodeEnv: env.NODE_ENV,
@@ -136,6 +225,12 @@ function mapEnvToConfig(env: Env): Config {
     },
     cors: {
       origin: env.CORS_ORIGIN,
+    },
+    outboundHttp: {
+      retry: {
+        defaults: defaultRetryPolicy,
+        providers: providerPolicies,
+      },
     },
   }
 

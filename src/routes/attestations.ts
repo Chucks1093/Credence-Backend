@@ -88,11 +88,11 @@ export function createAttestationRouter(repo: AttestationRepository): Router {
       throw error;
     }
 
-    const { page, limit } = pagination;
+    const { page, limit, offset } = pagination;
 
     const { attestations, total } = repo.findBySubject(identity, {
       includeRevoked,
-      page,
+      offset,
       limit,
     });
     const paginationMeta = buildPaginationMeta(total, page, limit);

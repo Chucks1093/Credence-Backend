@@ -1,11 +1,14 @@
+import {
+  getBackoffDelayMs,
+  resolveProviderRetryPolicy,
+  type ProviderRetryPolicies,
+  type RetryPolicy,
+} from '../lib/retryPolicy.js'
+import { logger } from '../utils/logger.js'
+
 export type SorobanNetwork = 'testnet' | 'mainnet'
 
-export interface RetryOptions {
-  maxAttempts: number
-  baseDelayMs: number
-  maxDelayMs: number
-  backoffMultiplier: number
-}
+export type RetryOptions = RetryPolicy
 
 export interface SorobanClientConfig {
   rpcUrl: string
@@ -13,6 +16,7 @@ export interface SorobanClientConfig {
   contractId: string
   timeoutMs?: number
   retry?: Partial<RetryOptions>
+  retryPolicies?: ProviderRetryPolicies
 }
 
 export interface ContractEvent {
@@ -43,6 +47,7 @@ interface SorobanRpcResponse<T> {
 export interface SorobanClientDependencies {
   fetchFn?: typeof fetch
   sleepFn?: (ms: number) => Promise<void>
+  randomFn?: () => number
 }
 
 export class SorobanClientError extends Error {
@@ -89,6 +94,7 @@ const DEFAULT_RETRY: RetryOptions = {
   baseDelayMs: 200,
   maxDelayMs: 2_000,
   backoffMultiplier: 2,
+  jitterStrategy: 'none',
 }
 
 export class SorobanClient {
@@ -99,6 +105,7 @@ export class SorobanClient {
   private readonly retryOptions: RetryOptions
   private readonly fetchFn: typeof fetch
   private readonly sleepFn: (ms: number) => Promise<void>
+  private readonly randomFn: () => number
 
   constructor(config: SorobanClientConfig, deps: SorobanClientDependencies = {}) {
     this.assertConfig(config)
@@ -107,9 +114,13 @@ export class SorobanClient {
     this.network = config.network
     this.contractId = config.contractId
     this.timeoutMs = config.timeoutMs ?? 5_000
-    this.retryOptions = { ...DEFAULT_RETRY, ...(config.retry ?? {}) }
+    this.retryOptions = resolveProviderRetryPolicy('soroban', DEFAULT_RETRY, {
+      providerPolicies: config.retryPolicies,
+      overrides: config.retry,
+    })
     this.fetchFn = deps.fetchFn ?? fetch
     this.sleepFn = deps.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.randomFn = deps.randomFn ?? Math.random
   }
 
   /**
@@ -193,6 +204,9 @@ export class SorobanClient {
         }
 
         const delay = this.getDelayMs(attempt)
+        logger.info(
+          `Retrying outbound request provider=soroban attempt=${attempt + 1}/${this.retryOptions.maxAttempts} delayMs=${delay} code=${normalized.code}`,
+        )
         await this.sleepFn(delay)
       }
     }
@@ -327,11 +341,7 @@ export class SorobanClient {
   }
 
   private getDelayMs(attempt: number): number {
-    const delay =
-      this.retryOptions.baseDelayMs *
-      Math.pow(this.retryOptions.backoffMultiplier, Math.max(0, attempt - 1))
-
-    return Math.min(delay, this.retryOptions.maxDelayMs)
+    return getBackoffDelayMs(this.retryOptions, attempt, this.randomFn)
   }
 }
 

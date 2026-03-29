@@ -1,4 +1,5 @@
 export * from './attestationsRepository.js'
+export * from './auditLogsRepository.js'
 export * from './bondsRepository.js'
 export * from './identitiesRepository.js'
 export * from './scoreHistoryRepository.js'

@@ -81,7 +81,6 @@ export function createRedisProbe(
       }
       if (!client) {
         const ioredis = await import("ioredis");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const Redis = ioredis.default as any;
         client = new Redis(url!, { maxRetriesPerRequest: 1 });
       }

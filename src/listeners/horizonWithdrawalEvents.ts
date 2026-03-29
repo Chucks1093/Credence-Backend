@@ -1,4 +1,4 @@
-import { Horizon, ServerApi } from '@stellar/stellar-sdk'
+import { Horizon } from '@stellar/stellar-sdk'
 
 /**
  * Interface for bond withdrawal event data
@@ -204,13 +204,13 @@ export class HorizonWithdrawalListener {
   /**
    * Check if an operation represents a withdrawal
    */
-  private isWithdrawalOperation(operation: ServerApi.OperationRecord): boolean {
+  private isWithdrawalOperation(operation: Horizon.ServerApi.OperationRecord): boolean {
     // Only process payment operations
     if (operation.type !== 'payment') {
       return false
     }
 
-    const payment = operation as ServerApi.PaymentOperationRecord
+    const payment = operation as Horizon.ServerApi.PaymentOperationRecord
     
     // Check if it's a withdrawal from bond contract or to specific account
     if (this.config.bondContractAddress) {
@@ -226,12 +226,12 @@ export class HorizonWithdrawalListener {
   /**
    * Parse a withdrawal event from a Horizon operation record
    */
-  private parseWithdrawalEvent(operation: ServerApi.OperationRecord): WithdrawalEvent | null {
+  private parseWithdrawalEvent(operation: Horizon.ServerApi.OperationRecord): WithdrawalEvent | null {
     if (operation.type !== 'payment') {
       return null
     }
 
-    const payment = operation as ServerApi.PaymentOperationRecord
+    const payment = operation as Horizon.ServerApi.PaymentOperationRecord
 
     return {
       id: operation.id,
@@ -253,13 +253,13 @@ export class HorizonWithdrawalListener {
    * Extract bond ID from operation details
    * This would depend on how bond IDs are encoded in transactions
    */
-  private extractBondId(operation: ServerApi.OperationRecord): string {
+  private extractBondId(operation: Horizon.ServerApi.OperationRecord): string {
     // In a real implementation, this would extract the bond ID from:
     // 1. Memo field
     // 2. Transaction metadata
     // 3. Operation details
     // For now, use a combination of account and transaction hash
-    const payment = operation as ServerApi.PaymentOperationRecord
+    const payment = operation as Horizon.ServerApi.PaymentOperationRecord
     return `${payment.from || payment.source_account}-${operation.transaction_hash}`
   }
 
