@@ -5,7 +5,7 @@ import { tracingContext, logger } from '../utils/logger.js'
 describe('RequestId Middleware', () => {
   let mockReq: any
   let mockRes: any
-  let nextFunction: ReturnType<typeof vi.fn>
+  let nextFunction: (err?: any) => void
 
   beforeEach(() => {
     mockReq = { 

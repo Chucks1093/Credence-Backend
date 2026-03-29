@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
 
     "rootDir": "src",
+    "outDir": "dist",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -12,9 +13,9 @@
     "sourceMap": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": ["node", "express", "pg", "vitest"]
+   "types": ["node", "express", "pg", "vitest/globals"]
   },
-  "include": ["src"],
+ "include": ["src", "tests"],
   "exclude": [
     "node_modules",
     "dist",
