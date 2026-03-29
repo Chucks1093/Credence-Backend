@@ -131,6 +131,7 @@ export class AttestationEventListener {
   constructor(
     private readonly store: AttestationStore,
     private readonly fetchEvents: EventFetcher,
+    private readonly replayService: { captureFailure: (type: string, data: any, reason: string) => Promise<any> },
     config: AttestationListenerConfig = {},
     private readonly onScoreInvalidation?: ScoreInvalidationCallback,
   ) {
@@ -176,8 +177,10 @@ export class AttestationEventListener {
           const affected = this.processEvent(event)
           if (affected) affectedAddresses.add(affected)
           this.lastCursor = event.pagingToken
-        } catch {
+        } catch (error: any) {
           this.errors += 1
+          // Capture failure for replay
+          await this.replayService.captureFailure('attestation', event, error.message)
         }
       }
 

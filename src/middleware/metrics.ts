@@ -112,6 +112,13 @@ export const identitySyncDuration = new client.Histogram({
   registers: [register]
 })
 
+export const staleCacheReadsTotal = new client.Counter({
+  name: 'stale_cache_reads_total',
+  help: 'Total number of stale read detections after a transaction status update',
+  labelNames: ['namespace'],
+  registers: [register]
+})
+
 // ============================================================================
 // Middleware
 // ============================================================================
@@ -244,4 +251,18 @@ export function recordIdentitySync(
   durationMs: number
 ) {
   identitySyncDuration.observe({ operation }, durationMs / 1000)
+}
+
+/**
+ * Record stale cache read
+ * 
+ * Usage:
+ * ```typescript
+ * import { recordStaleCacheRead } from './middleware/metrics.js'
+ * 
+ * recordStaleCacheRead('transaction_status')
+ * ```
+ */
+export function recordStaleCacheRead(namespace: string) {
+  staleCacheReadsTotal.inc({ namespace })
 }

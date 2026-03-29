@@ -119,3 +119,18 @@ export class IdentityService {
     return new Promise((resolve) => setTimeout(resolve, ms))
   }
 }
+
+export interface IdentityUpsertInput {
+  id: string
+}
+
+export interface BondUpsertInput {
+  id: string
+  amount: string
+  duration: string | null
+}
+
+// Compatibility no-op upsert hooks used by Horizon listener tests.
+export async function upsertIdentity(_identity: IdentityUpsertInput): Promise<void> {}
+
+export async function upsertBond(_bond: BondUpsertInput): Promise<void> {}
