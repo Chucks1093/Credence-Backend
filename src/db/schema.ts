@@ -1,4 +1,5 @@
 import type { Queryable } from './repositories/queryable.js'
+import { OUTBOX_TABLE_SCHEMA, OUTBOX_INDEXES } from './outbox/schema.js'
 
 const CREATE_TABLE_STATEMENTS = [
   `
@@ -89,6 +90,7 @@ const CREATE_TABLE_STATEMENTS = [
 ] as const
 
 const DROP_TABLE_STATEMENTS = [
+  'DROP TABLE IF EXISTS event_outbox',
   'DROP TABLE IF EXISTS report_jobs',
   'DROP TABLE IF EXISTS score_history',
   'DROP TABLE IF EXISTS audit_logs',

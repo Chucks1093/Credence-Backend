@@ -71,6 +71,37 @@ export const envSchema = z.object({
     .default('false')
     .transform((val: string) => val === 'true'),
 
+  // Outbox
+  OUTBOX_ENABLED: z
+    .string()
+    .default('true')
+    .transform((val) => val === 'true'),
+  OUTBOX_POLL_INTERVAL_MS: z
+    .string()
+    .default('1000')
+    .transform(Number)
+    .pipe(z.number().int().min(100)),
+  OUTBOX_BATCH_SIZE: z
+    .string()
+    .default('100')
+    .transform(Number)
+    .pipe(z.number().int().min(1)),
+  OUTBOX_PUBLISHED_RETENTION_DAYS: z
+    .string()
+    .default('7')
+    .transform(Number)
+    .pipe(z.number().int().min(1)),
+  OUTBOX_FAILED_RETENTION_DAYS: z
+    .string()
+    .default('30')
+    .transform(Number)
+    .pipe(z.number().int().min(1)),
+  OUTBOX_CLEANUP_INTERVAL_MS: z
+    .string()
+    .default('3600000')
+    .transform(Number)
+    .pipe(z.number().int().min(60000)),
+
   // Horizon (optional)
   HORIZON_URL: z.string().url().optional(),
 
@@ -128,6 +159,14 @@ export interface Config {
   features: {
     trustScoring: boolean
     bondEvents: boolean
+  }
+  outbox: {
+    enabled: boolean
+    pollIntervalMs: number
+    batchSize: number
+    publishedRetentionDays: number
+    failedRetentionDays: number
+    cleanupIntervalMs: number
   }
   horizon?: {
     url: string
@@ -222,6 +261,14 @@ function mapEnvToConfig(env: Env): Config {
     features: {
       trustScoring: env.ENABLE_TRUST_SCORING,
       bondEvents: env.ENABLE_BOND_EVENTS,
+    },
+    outbox: {
+      enabled: env.OUTBOX_ENABLED,
+      pollIntervalMs: env.OUTBOX_POLL_INTERVAL_MS,
+      batchSize: env.OUTBOX_BATCH_SIZE,
+      publishedRetentionDays: env.OUTBOX_PUBLISHED_RETENTION_DAYS,
+      failedRetentionDays: env.OUTBOX_FAILED_RETENTION_DAYS,
+      cleanupIntervalMs: env.OUTBOX_CLEANUP_INTERVAL_MS,
     },
     cors: {
       origin: env.CORS_ORIGIN,
