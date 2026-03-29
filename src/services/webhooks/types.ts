@@ -15,6 +15,10 @@ export interface WebhookConfig {
   events: WebhookEventType[]
   /** Secret key for HMAC signature verification. */
   secret: string
+  /** Previously active secret (during grace period). */
+  previousSecret?: string
+  /** Timestamp when the secret was last rotated. */
+  secretUpdatedAt: Date
   /** Whether this webhook is active. */
   active: boolean
 }

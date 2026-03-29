@@ -1,4 +1,5 @@
 import type { Queryable } from './repositories/queryable.js'
+import { OUTBOX_TABLE_SCHEMA, OUTBOX_INDEXES } from './outbox/schema.js'
 
 const CREATE_TABLE_STATEMENTS = [
   `
@@ -53,6 +54,21 @@ const CREATE_TABLE_STATEMENTS = [
   )
   `,
   `
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    actor_id TEXT NOT NULL,
+    actor_email TEXT NOT NULL,
+    action TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    details_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL CHECK (status IN ('success', 'failure')),
+    ip_address TEXT,
+    error_message TEXT
+  )
+  `,
+  `
   CREATE TABLE IF NOT EXISTS report_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type TEXT NOT NULL,
@@ -63,17 +79,44 @@ const CREATE_TABLE_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )
   `,
+  `
+  CREATE TABLE IF NOT EXISTS settlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    bond_id BIGINT NOT NULL REFERENCES bonds(id) ON DELETE CASCADE,
+    amount NUMERIC(36, 18) NOT NULL CHECK (amount >= 0),
+    transaction_hash VARCHAR(128) NOT NULL,
+    settled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'settled', 'failed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT settlements_bond_tx_unique UNIQUE (bond_id, transaction_hash)
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key TEXT PRIMARY KEY,
+    request_hash TEXT NOT NULL,
+    response_code INTEGER NOT NULL,
+    response_body JSONB NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+  `,
   `CREATE INDEX IF NOT EXISTS bonds_identity_address_idx ON bonds (identity_address)`,
   `CREATE INDEX IF NOT EXISTS attestations_subject_address_idx ON attestations (subject_address)`,
   `CREATE INDEX IF NOT EXISTS attestations_bond_id_idx ON attestations (bond_id)`,
   `CREATE INDEX IF NOT EXISTS slash_events_bond_id_idx ON slash_events (bond_id)`,
   `CREATE INDEX IF NOT EXISTS score_history_identity_address_idx ON score_history (identity_address)`,
-  `CREATE INDEX IF NOT EXISTS settlements_bond_settled_idx ON settlements (bond_id, settled_at DESC, id DESC)`,
+  `CREATE INDEX IF NOT EXISTS audit_logs_actor_time_idx ON audit_logs (actor_id, occurred_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS audit_logs_resource_time_idx ON audit_logs (resource_id, occurred_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS audit_logs_time_idx ON audit_logs (occurred_at DESC)`,
 ] as const
 
 const DROP_TABLE_STATEMENTS = [
+  'DROP TABLE IF EXISTS event_outbox',
   'DROP TABLE IF EXISTS report_jobs',
   'DROP TABLE IF EXISTS score_history',
+  'DROP TABLE IF EXISTS audit_logs',
   'DROP TABLE IF EXISTS slash_events',
   'DROP TABLE IF EXISTS attestations',
   'DROP TABLE IF EXISTS bonds',
@@ -88,7 +131,7 @@ export async function createSchema(db: Queryable): Promise<void> {
 
 export async function resetDatabase(db: Queryable): Promise<void> {
   await db.query(
-    'TRUNCATE TABLE report_jobs, score_history, slash_events, attestations, bonds, identities RESTART IDENTITY CASCADE'
+    'TRUNCATE TABLE report_jobs, audit_logs, score_history, slash_events, attestations, bonds, identities RESTART IDENTITY CASCADE'
   )
 }
 

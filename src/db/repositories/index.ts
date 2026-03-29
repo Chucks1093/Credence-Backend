@@ -1,9 +1,14 @@
 export * from './attestationsRepository.js'
+export * from './auditLogsRepository.js'
 export * from './bondsRepository.js'
 export * from './identitiesRepository.js'
 export * from './scoreHistoryRepository.js'
 export * from './slashEventsRepository.js'
+export * from './failedInboundEventsRepository.js'
 export * from './reportRepository.js'
+export * from './settlementsRepository.js'
+export * from './idempotencyRepository.js'
+export * from './webhookRepository.js'
 
 export interface Identity {
      /** Surrogate UUID primary key. */
