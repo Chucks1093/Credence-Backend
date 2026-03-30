@@ -1,11 +1,14 @@
+import {
+  getBackoffDelayMs,
+  resolveProviderRetryPolicy,
+  type ProviderRetryPolicies,
+  type RetryPolicy,
+} from '../lib/retryPolicy.js'
+import { logger } from '../utils/logger.js'
+
 export type SorobanNetwork = 'testnet' | 'mainnet'
 
-export interface RetryOptions {
-  maxAttempts: number
-  baseDelayMs: number
-  maxDelayMs: number
-  backoffMultiplier: number
-}
+export type RetryOptions = RetryPolicy
 
 export interface SorobanClientConfig {
   rpcUrl: string
@@ -13,6 +16,7 @@ export interface SorobanClientConfig {
   contractId: string
   timeoutMs?: number
   retry?: Partial<RetryOptions>
+  retryPolicies?: ProviderRetryPolicies
 }
 
 export interface ContractEvent {
@@ -43,6 +47,7 @@ interface SorobanRpcResponse<T> {
 export interface SorobanClientDependencies {
   fetchFn?: typeof fetch
   sleepFn?: (ms: number) => Promise<void>
+  randomFn?: () => number
 }
 
 export class SorobanClientError extends Error {
@@ -89,6 +94,7 @@ const DEFAULT_RETRY: RetryOptions = {
   baseDelayMs: 200,
   maxDelayMs: 2_000,
   backoffMultiplier: 2,
+  jitterStrategy: 'none',
 }
 
 export class SorobanClient {
@@ -99,6 +105,7 @@ export class SorobanClient {
   private readonly retryOptions: RetryOptions
   private readonly fetchFn: typeof fetch
   private readonly sleepFn: (ms: number) => Promise<void>
+  private readonly randomFn: () => number
 
   constructor(config: SorobanClientConfig, deps: SorobanClientDependencies = {}) {
     this.assertConfig(config)
@@ -107,9 +114,13 @@ export class SorobanClient {
     this.network = config.network
     this.contractId = config.contractId
     this.timeoutMs = config.timeoutMs ?? 5_000
-    this.retryOptions = { ...DEFAULT_RETRY, ...(config.retry ?? {}) }
+    this.retryOptions = resolveProviderRetryPolicy('soroban', DEFAULT_RETRY, {
+      providerPolicies: config.retryPolicies,
+      overrides: config.retry,
+    })
     this.fetchFn = deps.fetchFn ?? fetch
     this.sleepFn = deps.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.randomFn = deps.randomFn ?? Math.random
   }
 
   /**
@@ -193,6 +204,9 @@ export class SorobanClient {
         }
 
         const delay = this.getDelayMs(attempt)
+        logger.info(
+          `Retrying outbound request provider=soroban attempt=${attempt + 1}/${this.retryOptions.maxAttempts} delayMs=${delay} code=${normalized.code}`,
+        )
         await this.sleepFn(delay)
       }
     }
@@ -238,6 +252,22 @@ export class SorobanClient {
       try {
         payload = (await response.json()) as SorobanRpcResponse<T>
       } catch (error) {
+        // If the body read was interrupted by an abort (timeout fired while
+        // streaming) or a connection reset, surface the real transport error
+        // so the retry classifier handles it correctly instead of treating it
+        // as a non-retriable PARSE_ERROR.
+        const transport = normalizeTransportError(error)
+        if (transport !== null) {
+          throw new SorobanClientError({
+            code: transport.code === 'TIMEOUT' ? 'TIMEOUT_ERROR' : 'NETWORK_ERROR',
+            message:
+              transport.code === 'TIMEOUT'
+                ? `Soroban RPC response timed out while reading body after ${this.timeoutMs}ms.`
+                : `Soroban RPC transport error reading body: ${transport.message}`,
+            attempts: attempt,
+            cause: error,
+          })
+        }
         throw new SorobanClientError({
           code: 'PARSE_ERROR',
           message: 'Unable to parse Soroban RPC response JSON.',
@@ -284,10 +314,22 @@ export class SorobanClient {
       return error
     }
 
-    if (error instanceof Error && error.name === 'AbortError') {
+    // Use shared detector so DOMException, Error, and cause-chained variants
+    // (e.g. undici's TypeError { cause: AbortError }) are all caught.
+    if (isAbortError(error)) {
       return new SorobanClientError({
         code: 'TIMEOUT_ERROR',
         message: `Soroban RPC request timed out after ${this.timeoutMs}ms.`,
+        attempts,
+        cause: error,
+      })
+    }
+
+    if (isNetworkError(error)) {
+      const msg = error instanceof Error ? error.message : 'Unknown transport error'
+      return new SorobanClientError({
+        code: 'NETWORK_ERROR',
+        message: `Soroban RPC transport error: ${msg}`,
         attempts,
         cause: error,
       })
@@ -327,11 +369,7 @@ export class SorobanClient {
   }
 
   private getDelayMs(attempt: number): number {
-    const delay =
-      this.retryOptions.baseDelayMs *
-      Math.pow(this.retryOptions.backoffMultiplier, Math.max(0, attempt - 1))
-
-    return Math.min(delay, this.retryOptions.maxDelayMs)
+    return getBackoffDelayMs(this.retryOptions, attempt, this.randomFn)
   }
 }
 

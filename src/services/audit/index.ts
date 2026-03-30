@@ -1,12 +1,18 @@
-import { AuditLogEntry, AuditAction } from './types.js'
+import { pool } from '../../db/pool.js'
+import {
+  InMemoryAuditLogsRepository,
+  PostgresAuditLogsRepository,
+  type AuditLogRepository,
+} from '../../db/repositories/auditLogsRepository.js'
+import type { AuditLogEntry, AuditLogFilters, AuditLogInput, AuditStatus } from './types.js'
+import { AuditAction } from './types.js'
 
 /**
  * Audit log service for tracking admin actions
  * In production, this would write to a database or centralized logging system
  */
 export class AuditLogService {
-  private logs: AuditLogEntry[] = []
-  private logId = 0
+  constructor(private readonly repository: AuditLogRepository) {}
 
   /**
    * Log an admin action
@@ -23,39 +29,44 @@ export class AuditLogService {
    * @param ipAddress - IP address of the requester
    * @returns The created audit log entry
    */
-  logAction(
-    tenantId: string,
-    adminId: string,
-    adminEmail: string,
-    action: AuditAction,
-    targetUserId: string,
-    targetUserEmail: string,
-    details: Record<string, unknown> = {},
-    status: 'success' | 'failure' = 'success',
+  async logAction(
+    inputOrActorId: AuditLogInput | string,
+    actorEmail?: string,
+    action?: AuditAction | string,
+    targetUserId?: string,
+    targetUserEmail?: string,
+    details?: Record<string, unknown>,
+    status?: AuditStatus,
     errorMessage?: string,
-    ipAddress?: string
-  ): AuditLogEntry {
-    if (!tenantId || tenantId.trim().length === 0) {
-      throw new Error('tenantId is required for audit log entries')
+    ipAddress?: string,
+  ): Promise<AuditLogEntry> {
+    if (typeof inputOrActorId !== 'string') {
+      return this.repository.append(inputOrActorId)
     }
 
-    const entry: AuditLogEntry = {
-      id: `audit-${this.logId++}`,
-      timestamp: new Date().toISOString(),
-      tenantId,
-      adminId,
-      adminEmail,
-      action,
-      targetUserId,
-      targetUserEmail,
-      details,
-      ipAddress,
+    const actorId = inputOrActorId
+    const effectiveAction = action ?? 'UNKNOWN_ACTION'
+    const resourceType =
+      effectiveAction === AuditAction.LIST_USERS || effectiveAction === AuditAction.EXPORT_AUDIT_LOGS
+        ? 'admin_user'
+        : 'user'
+
+    const mappedDetails: Record<string, unknown> = {
+      ...(details ?? {}),
+      ...(targetUserEmail ? { targetUserEmail } : {}),
+    }
+
+    return this.repository.append({
+      actorId,
+      actorEmail: actorEmail ?? 'unknown@unknown',
+      action: effectiveAction,
+      resourceType,
+      resourceId: targetUserId ?? actorId,
+      details: mappedDetails,
       status,
       errorMessage,
-    }
-
-    this.logs.push(entry)
-    return entry
+      ipAddress,
+    })
   }
 
   /**
@@ -69,74 +80,27 @@ export class AuditLogService {
    * @param options - Additional options for tenant scoping
    * @returns Array of matching audit log entries and total count
    */
-  getLogs(
-    filters?: {
-      action?: AuditAction
-      adminId?: string
-      targetUserId?: string
-      status?: 'success' | 'failure'
-      tenantId?: string
-    },
+  async getLogs(
+    filters?: AuditLogFilters,
     limit = 100,
-    offset = 0,
-    options?: {
-      /** Allow super-admin to query across all tenants. Must be explicitly set to true. */
-      allowSuperScope?: boolean
-    }
-  ): {
-    logs: AuditLogEntry[]
-    total: number
-  } {
-    // SECURITY: Enforce tenant scoping - deny by default
-    if (!filters?.tenantId && !options?.allowSuperScope) {
-      throw new Error(
-        'Tenant scoping required: either provide tenantId filter or explicitly enable allowSuperScope for privileged access'
-      )
-    }
-
-    let filtered = this.logs
-
-    // Apply tenant filter if provided (not in super-scope mode)
-    if (filters?.tenantId) {
-      filtered = filtered.filter((log) => log.tenantId === filters.tenantId)
-    }
-
-    if (filters?.action) {
-      filtered = filtered.filter((log) => log.action === filters.action)
-    }
-    if (filters?.adminId) {
-      filtered = filtered.filter((log) => log.adminId === filters.adminId)
-    }
-    if (filters?.targetUserId) {
-      filtered = filtered.filter((log) => log.targetUserId === filters.targetUserId)
-    }
-    if (filters?.status) {
-      filtered = filtered.filter((log) => log.status === filters.status)
-    }
-
-    // Sort by timestamp descending (newest first)
-    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-
-    const total = filtered.length
-    const paginated = filtered.slice(offset, offset + limit)
-
-    return { logs: paginated, total }
+    offset = 0
+  ): Promise<{ logs: AuditLogEntry[]; total: number }> {
+    return this.repository.query(filters, limit, offset)
   }
 
   /**
    * Get all audit logs (for testing)
    * @returns All audit log entries
    */
-  getAllLogs(): AuditLogEntry[] {
-    return this.logs
+  async getAllLogs(): Promise<AuditLogEntry[]> {
+    return this.repository.getAll()
   }
 
   /**
    * Clear all logs (for testing)
    */
-  clearLogs(): void {
-    this.logs = []
-    this.logId = 0
+  async clearLogs(): Promise<void> {
+    await this.repository.clear()
   }
 
   /**
@@ -169,7 +133,8 @@ export class AuditLogService {
     const startMs = startDate.getTime()
     const endMs = endDate.getTime()
 
-    for (const log of this.logs) {
+    const logs = await this.getAllLogs()
+    for (const log of logs) {
       const logTime = new Date(log.timestamp).getTime()
       
       // Apply tenant filter if provided (not in super-scope mode)
@@ -178,10 +143,8 @@ export class AuditLogService {
       }
       
       if (logTime >= startMs && logTime <= endMs) {
-        // Redact and yield
         yield this.redactLogEntry(log)
-        // Yield to event loop to simulate genuine streaming
-        await new Promise((resolve) => setTimeout(resolve, 0))
+        await new Promise((resolve) => setImmediate(resolve))
       }
     }
   }
@@ -220,8 +183,17 @@ export class AuditLogService {
   }
 }
 
-// Singleton
-export const auditLogService = new AuditLogService()
+function createRepository(): AuditLogRepository {
+  const shouldUsePostgres = process.env.AUDIT_LOG_BACKEND === 'postgres'
+  if (!shouldUsePostgres) {
+    return new InMemoryAuditLogsRepository()
+  }
+
+  return new PostgresAuditLogsRepository(pool)
+}
+
+// Create a singleton instance
+export const auditLogService = new AuditLogService(createRepository())
 
 export { AuditAction } from './types.js'
-export type { AuditLogEntry } from './types.js'
+export type { AuditLogEntry, AuditLogInput, AuditLogFilters } from './types.js'
