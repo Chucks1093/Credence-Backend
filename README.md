@@ -9,6 +9,7 @@ This service is part of [Credence](../README.md). It supports:
 - Public query API (trust score, bond status, attestations)
 - Horizon listener for bond withdrawal events
 - Redis-based caching layer
+- **Configurable lock timeouts** – Prevents indefinite waits on locked rows with policy-based timeouts and automatic retry
 - **Horizon listener / identity state sync** – Reconciles DB with on-chain bond state (see [Identity state sync](#identity-state-sync)).
 - Reputation engine (off-chain score from bond data) (future)
 

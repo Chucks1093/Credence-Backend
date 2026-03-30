@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import type { StoredApiKey } from '../services/apiKeys.js'
 
 /**
  * API key scopes for authorization
@@ -22,10 +23,7 @@ export enum UserRole {
  * Extended Express Request with API key and user metadata
  */
 export interface AuthenticatedRequest extends Request {
-  apiKey?: {
-    key: string
-    scope: ApiScope
-  }
+  apiKey?: StoredApiKey
   user?: {
     id: string
     role: UserRole
@@ -114,8 +112,8 @@ export function requireApiKey(requiredScope: ApiScope) {
       return
     }
 
-    // Attach API key metadata to request
-    ;(req as AuthenticatedRequest).apiKey = { key: apiKey, scope }
+    // Preserve legacy metadata shape expected by route tests.
+    ;(req as any).apiKey = { key: apiKey, scope }
     next()
   }
 }
